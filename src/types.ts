@@ -12,6 +12,8 @@ export interface Paper {
 export interface Reviewer {
   id: string
   name: string
+  /** 所属机构：去除首尾空白后完全相同者视为同一机构；空串表示无机构（仅代表本人，不与其他空值合并） */
+  organization: string
   /** 擅长标签 */
   tags: string[]
   /** 最多承担的稿件数（容量） */
@@ -73,11 +75,16 @@ export interface PreAssignmentIssue {
   paperTitle?: string
   /** 用于展示的评审人姓名（评审人不存在时缺省） */
   reviewerName?: string
+  /** 机构去重冲突时：规范化后的机构名（去首尾空白后的非空值） */
+  organization?: string
+  /** 机构去重冲突时：同一稿件上该机构涉及的全部评审人姓名 */
+  organizationReviewerNames?: string[]
   /** 问题类型 */
   reason:
     | 'paper-missing' // 引用的稿件已不存在
     | 'reviewer-missing' // 引用的评审人已不存在
     | 'conflict' // 稿件与评审人之间声明了利益冲突
+    | 'organization-duplicate' // 同一稿件的预指派中出现了同一机构的多位评审人
     | 'paper-overflow' // 同篇预指派人数超过该稿件所需人数
     | 'reviewer-overload' // 该评审人被预占名额超过其容量
   message: string

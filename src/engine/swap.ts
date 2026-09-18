@@ -13,7 +13,9 @@
  *  2. 无利益冲突：A 未声明回避 q、B 未声明回避 p；
  *  3. 不重复承担同一稿件：交换前 A 未评 q（即 q ∉ A 的现有稿件）、
  *     B 未评 p（即 p ∉ B 的现有稿件）。一换一是一对一替换，每位评审人的稿件数
- *     不变，因此「每篇稿件人数不变」与「个人容量不超限」天然保持，无需额外处理。
+ *     不变，因此「每篇稿件人数不变」与「个人容量不超限」天然保持，无需额外处理；
+ *  4. 不违反机构去重：交换后 A 在 q 上的机构、B 在 p 上的机构，都不得与该稿件上
+ *     其余评审人（去首尾空白后）的非空机构相同；机构为空者不受限制，空值互不合并。
  *
  * 候选按「主题匹配净增」从高到低排序，供界面预览后由用户确认；
  * 确认时仅在结果层改派，不触碰录入数据（AppData）。
@@ -58,6 +60,8 @@ export interface SwapExclusionCounts {
   duplicate: number
   /** 被换走的分派中有预指派（硬约束不允许互换移除预指派） */
   preassigned: number
+  /** 交换后会让同一稿件出现同一机构的两位评审人（机构去重硬约束） */
+  organization: number
 }
 
 export interface SwapEnumeration {
@@ -76,12 +80,40 @@ function papersOf(assignments: AssignmentItem[], reviewerId: string): Set<string
   return new Set(assignments.filter((a) => a.reviewerId === reviewerId).map((a) => a.paperId))
 }
 
+/** 机构规范化：去首尾空白；空串表示无机构（仅代表本人，不参与去重） */
+function orgOf(reviewer: Reviewer | undefined): string {
+  return (reviewer?.organization ?? '').trim()
+}
+
+/**
+ * 机构去重校验：交换后 reviewerId 改评 paperId 时，该稿件在交换完成后的在位评审人中
+ * 是否已有与其同（非空）机构者。该稿件上两位参与互换者（leavingReviewerIds）都将离开，
+ * 均不计入；其余在位评审人同机构即冲突。
+ */
+function orgConflictOnPaper(
+  assignments: AssignmentItem[],
+  reviewerMap: Map<string, Reviewer>,
+  paperId: string,
+  reviewerId: string,
+  leavingReviewerIds: string[]
+): boolean {
+  const org = orgOf(reviewerMap.get(reviewerId))
+  if (!org) return false // 空机构仅代表本人，不受机构去重限制
+  const leaving = new Set(leavingReviewerIds)
+  return assignments.some(
+    (a) =>
+      a.paperId === paperId &&
+      !leaving.has(a.reviewerId) &&
+      orgOf(reviewerMap.get(a.reviewerId)) === org
+  )
+}
+
 /**
  * 枚举两位评审人之间所有可行的一换一候选。
  * 要求两位评审人当前都至少承担一篇稿件，否则返回空列表。
  */
 export function enumerateSwaps(data: AppData, result: AssignmentSuccess, reviewerAId: string, reviewerBId: string): SwapEnumeration {
-  const excluded: SwapExclusionCounts = { samePaper: 0, conflict: 0, duplicate: 0, preassigned: 0 }
+  const excluded: SwapExclusionCounts = { samePaper: 0, conflict: 0, duplicate: 0, preassigned: 0, organization: 0 }
   if (!reviewerAId || !reviewerBId || reviewerAId === reviewerBId) {
     return { candidates: [], excluded }
   }
@@ -135,6 +167,17 @@ export function enumerateSwaps(data: AppData, result: AssignmentSuccess, reviewe
       // 交换后 A 仍承担 q（相当于 q 没换出去却又算了一次），造成重复。
       if (aPaperSet.has(q) || bPaperSet.has(p)) {
         excluded.duplicate++
+        continue
+      }
+
+      // 排除项 4：交换后违反机构去重——A 到 q、B 到 p 后，
+      // 不得与该稿件交换完成后仍在位的评审人同机构（空机构不受限，空值互不合并）。
+      // p 上 A、B（换入）都将处于“离开/未定”状态，q 上 B、A 同理，故两位互换者都不计入。
+      if (
+        orgConflictOnPaper(result.assignments, reviewerMap, q, reviewerAId, [reviewerAId, reviewerBId]) ||
+        orgConflictOnPaper(result.assignments, reviewerMap, p, reviewerBId, [reviewerAId, reviewerBId])
+      ) {
+        excluded.organization++
         continue
       }
 
@@ -237,6 +280,11 @@ export function applySwapCandidate(
   const bPaperSet = papersOf(result.assignments, sideB.reviewerId)
   if (aPaperSet.has(sideA.toPaperId) || bPaperSet.has(sideB.toPaperId)) return null
 
+  // 机构去重（与枚举同一规则）：换入后不得与目标稿件交换后仍在位的评审人同机构
+  const reviewerMapForOrg = new Map(data.reviewers.map((r) => [r.id, r]))
+  if (orgConflictOnPaper(result.assignments, reviewerMapForOrg, sideA.toPaperId, sideA.reviewerId, [sideA.reviewerId, sideB.reviewerId])) return null
+  if (orgConflictOnPaper(result.assignments, reviewerMapForOrg, sideB.toPaperId, sideB.reviewerId, [sideA.reviewerId, sideB.reviewerId])) return null
+
   // ---- 执行改派：替换两条分派，其余保持不变 ----
   const next: AssignmentItem[] = result.assignments.map((a) => {
     if (a.paperId === sideA.fromPaperId && a.reviewerId === sideA.reviewerId) {
@@ -267,6 +315,18 @@ export function applySwapCandidate(
   }
   for (const paper of data.papers) {
     if (paper.reviewsRequired > 0 && perPaper.get(paper.id) !== paper.reviewsRequired) return null
+  }
+
+  // 复核机构去重：同一稿件不得出现两个去空白后相同的非空机构评审人
+  const orgsByPaper = new Map<string, Set<string>>()
+  const reviewerMapForCheck = new Map(data.reviewers.map((r) => [r.id, r]))
+  for (const a of next) {
+    const org = orgOf(reviewerMapForCheck.get(a.reviewerId))
+    if (!org) continue
+    const set = orgsByPaper.get(a.paperId) ?? new Set<string>()
+    if (set.has(org)) return null
+    set.add(org)
+    orgsByPaper.set(a.paperId, set)
   }
 
   const topicMatches = next.filter((a) => a.topicMatched).length

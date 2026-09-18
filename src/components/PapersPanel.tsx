@@ -19,6 +19,7 @@ const issueLabel: Record<string, string> = {
   'paper-missing': '稿件已不存在',
   'reviewer-missing': '评审人已不存在',
   conflict: '存在利益冲突',
+  'organization-duplicate': '同稿件机构重复',
   'paper-overflow': '超过该稿件名额',
   'reviewer-overload': '超过评审人容量'
 }
@@ -118,11 +119,25 @@ function PaperCard({
   const assignedReviewerIds = new Set(own.map((pa) => pa.reviewerId))
   const full = own.length >= paper.reviewsRequired
 
-  // 标记本条预指派在当前数据下是否有效（冲突 / 超容量等），供卡片内联提示
+  // 该稿件预指派中已占用的非空机构：再指定同机构者会被“每篇每机构至多一人”硬约束整体拒绝
+  const usedOrgKeys = new Set(
+    own
+      .map((pa) => (reviewerById.get(pa.reviewerId)?.organization ?? '').trim())
+      .filter((org) => org.length > 0)
+  )
+
+  // 标记本条预指派在当前数据下是否有效（冲突 / 超容量 / 同机构等），供卡片内联提示
   const statusOf = (pa: PreAssignment): { ok: boolean; label?: string } => {
     const rv = reviewerById.get(pa.reviewerId)
     if (!rv) return { ok: false, label: '评审人已不存在' }
     if (rv.conflictPaperIds.includes(paper.id)) return { ok: false, label: '利益冲突' }
+    const org = (rv.organization ?? '').trim()
+    if (org) {
+      const sameOrg = own.filter(
+        (x) => x.id !== pa.id && (reviewerById.get(x.reviewerId)?.organization ?? '').trim() === org
+      )
+      if (sameOrg.length > 0) return { ok: false, label: `同机构「${org}」重复` }
+    }
     const reviewerOwn = preAssignments.filter((x) => x.reviewerId === rv.id)
     if (reviewerOwn.length > rv.capacity) return { ok: false, label: `该评审人预占 ${reviewerOwn.length} 超容量 ${rv.capacity}` }
     if (own.length > paper.reviewsRequired) return { ok: false, label: `超名额（需 ${paper.reviewsRequired}）` }
@@ -184,7 +199,10 @@ function PaperCard({
               const st = statusOf(pa)
               return (
                 <span key={pa.id} className={`preassign-chip ${st.ok ? '' : 'preassign-chip--bad'}`} title={st.label}>
-                  <span className="preassign-chip-name">{rv?.name ?? `已删除评审人（${pa.reviewerId}）`}</span>
+                  <span className="preassign-chip-name">
+                    {rv?.name ?? `已删除评审人（${pa.reviewerId}）`}
+                    {rv && (rv.organization ?? '').trim() && <em className="preassign-chip-org">· {(rv.organization ?? '').trim()}</em>}
+                  </span>
                   {!st.ok && <em className="preassign-chip-warn">⚠ {st.label}</em>}
                   <button
                     type="button"
@@ -214,11 +232,13 @@ function PaperCard({
                   const conflicting = r.conflictPaperIds.includes(paper.id)
                   const reviewerOwnCount = preAssignments.filter((pa) => pa.reviewerId === r.id).length
                   const overloaded = reviewerOwnCount >= r.capacity
+                  const org = (r.organization ?? '').trim()
+                  const sameOrgOnPaper = org.length > 0 && usedOrgKeys.has(org)
                   return (
                     <button
                       type="button"
                       key={r.id}
-                      className="conflict-option preassign-option"
+                      className={`conflict-option preassign-option ${sameOrgOnPaper ? 'preassign-option--bad' : ''}`}
                       onClick={() => {
                         onAdd(paper.id, r.id)
                         if (own.length + 1 >= paper.reviewsRequired) setPickerOpen(false)
@@ -226,11 +246,15 @@ function PaperCard({
                     >
                       <span className="preassign-plus">＋</span>
                       <span>{r.name}</span>
+                      {org && <em className="preassign-org-tag" title="机构（同一稿件每机构至多一人）">🏛 {org}</em>}
                       <span className="muted">
                         预占 {reviewerOwnCount}/{r.capacity}
                       </span>
                       {conflicting && <em className="tag-overlap-hint preassign-conflict-hint">与该稿有利益冲突</em>}
                       {!conflicting && overloaded && <em className="tag-overlap-hint preassign-conflict-hint">预占将超容量</em>}
+                      {!conflicting && sameOrgOnPaper && (
+                        <em className="tag-overlap-hint preassign-conflict-hint">该机构已在本稿预指派（将拒绝生成）</em>
+                      )}
                     </button>
                   )
                 })}

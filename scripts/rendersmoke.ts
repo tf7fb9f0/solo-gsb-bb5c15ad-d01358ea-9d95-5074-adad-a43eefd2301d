@@ -15,6 +15,7 @@ import { createSampleData } from '../src/sampleData'
 import { solveAssignment, computeMatchedTags } from '../src/engine/solver'
 import { ResultPanel } from '../src/components/ResultPanel'
 import { PapersPanel } from '../src/components/PapersPanel'
+import { ReviewersPanel } from '../src/components/ReviewersPanel'
 import { buildExportPayload } from '../src/exporter'
 import type { AppData } from '../src/types'
 
@@ -132,6 +133,50 @@ console.log('✓ 示例数据渲染成功，长度', html2.length)
   if (!payload.assignments.some((a) => a.preassigned && a.reviewerId === 'rev_bob'))
     throw new Error('导出未标注来自预指派的分派')
   console.log('✓ 预指派成功结果与 JSON 导出标注渲染成功')
+}
+
+// 机构去重：评审人编辑区有机构字段；成功结果与导出携带机构信息
+{
+  const data = createSampleData()
+  const rvHtml = renderToString(
+    React.createElement(ReviewersPanel, {
+      papers: data.papers,
+      reviewers: data.reviewers,
+      onChange: () => {}
+    })
+  )
+  if (!rvHtml.includes('机构')) throw new Error('评审人编辑区未渲染机构字段')
+  if (!rvHtml.includes('清华大学')) throw new Error('示例机构未渲染')
+  console.log('✓ 评审人面板机构字段渲染成功')
+
+  const solved = solveAssignment(data)
+  if (!solved.feasible) throw new Error('示例数据（含机构）应可生成可行方案')
+  const payload = buildExportPayload(data, solved)
+  if (!payload.assignments.every((a) => typeof a.reviewerOrganization === 'string'))
+    throw new Error('导出分派缺少机构字段')
+  if (!payload.reviewerLoads.every((l) => typeof l.reviewerOrganization === 'string'))
+    throw new Error('导出负载缺少机构字段')
+  if (!payload.assignments.some((a) => a.reviewerOrganization === '清华大学'))
+    throw new Error('导出未包含去空白后的机构名')
+  console.log('✓ 结果导出含机构信息')
+
+  // 预指派同机构重复 → 整体拒绝，失败区列出机构（p4 与 Alice/Carol 均无冲突，二人同属清华）
+  const dup: AppData = {
+    ...data,
+    preAssignments: [
+      { id: 'pa1', paperId: data.papers[3].id, reviewerId: 'rev_alice' },
+      { id: 'pa2', paperId: data.papers[3].id, reviewerId: 'rev_carol' }
+    ]
+  }
+  const dupFail = solveAssignment(dup)
+  if (dupFail.feasible) throw new Error('同稿预指派同机构应整体拒绝')
+  const dupHtml = renderToString(
+    React.createElement(ResultPanel, { data: dup, result: dupFail, stale: false, onExport: () => {}, onApplySwap: () => {} })
+  )
+  if (!dupHtml.includes('清华大学')) throw new Error('机构重复失败结果未列出机构')
+  if (!dupHtml.includes('预指派机构重复')) throw new Error('未渲染机构重复原因标签')
+  if (dupHtml.includes('assignee')) throw new Error('机构重复失败不应含分派结果')
+  console.log('✓ 预指派同稿机构重复整体拒绝（列出机构与评审人）渲染成功')
 }
 
 // 旧数据兼容：localStorage 中没有 preAssignments 字段时，应用仍可正常渲染与求解

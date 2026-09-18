@@ -22,6 +22,7 @@ const issueLabel: Record<string, string> = {
   'paper-missing': '引用稿件不存在',
   'reviewer-missing': '引用评审人不存在',
   conflict: '与利益冲突冲突',
+  'organization-duplicate': '预指派机构重复',
   'paper-overflow': '同篇预指派超过名额',
   'reviewer-overload': '单人预占超过容量'
 }
@@ -33,8 +34,8 @@ export function ResultPanel({ data, result, stale, onExport, onApplySwap }: Resu
         <p>点击页面顶部的「▶ 生成分派」按钮，系统将在浏览器本地完成整数规划求解。</p>
         <ul>
           <li>
-            <strong>硬约束</strong>：预指派必须入选、利益冲突回避、评审人容量上限、每篇稿件所需评审人数，
-            四者必须全部满足；
+            <strong>硬约束</strong>：预指派必须入选、利益冲突回避、评审人容量上限、每篇稿件所需评审人数、
+            同一篇稿件对每个机构至多选择一人（空机构除外），五者必须全部满足；
           </li>
           <li>
             <strong>优化目标</strong>：先最大化主题标签匹配，再最小化评审人最大负载（负载均衡）。
@@ -57,23 +58,52 @@ export function ResultPanel({ data, result, stale, onExport, onApplySwap }: Resu
             <div className="reason-card preassignment-reason-card">
               <span className="reason-kind">{kindLabel.preassignment}</span>
               <p className="reason-message">{preReason.message}</p>
-              <div className="preassign-issue-table">
-                <div className="preassign-issue-row preassign-issue-head">
-                  <span>稿件</span>
-                  <span>评审人</span>
-                  <span>原因</span>
-                </div>
-                {preReason.issues.map((iss) => (
-                  <div className="preassign-issue-row" key={iss.preAssignmentId}>
-                    <span>{iss.paperTitle ? `《${iss.paperTitle}》` : `（已删除：${iss.paperId ?? '—'}）`}</span>
-                    <span>{iss.reviewerName ?? `（已删除：${iss.reviewerId ?? '—'}）`}</span>
-                    <span>
-                      <span className="stress-chip stress-chip--red">{issueLabel[iss.reason] ?? iss.reason}</span>
-                      <span className="muted preassign-issue-detail">{iss.message}</span>
-                    </span>
+              {(() => {
+                const hasOrgIssues = preReason.issues.some((iss) => iss.organization)
+                return (
+                  <div
+                    className="preassign-issue-table"
+                  >
+                    <div
+                      className={`preassign-issue-row preassign-issue-head ${hasOrgIssues ? 'preassign-issue-row--org' : ''}`}
+                    >
+                      <span>稿件</span>
+                      {hasOrgIssues && <span>机构</span>}
+                      <span>评审人</span>
+                      <span>原因</span>
+                    </div>
+                    {preReason.issues.map((iss) => (
+                      <div
+                        className={`preassign-issue-row ${hasOrgIssues ? 'preassign-issue-row--org' : ''}`}
+                        key={iss.preAssignmentId}
+                      >
+                        <span>{iss.paperTitle ? `《${iss.paperTitle}》` : `（已删除：${iss.paperId ?? '—'}）`}</span>
+                        {hasOrgIssues && (
+                          <span>
+                            {iss.organization ? (
+                              <span className="stress-chip stress-chip--amber org-chip">🏛 {iss.organization}</span>
+                            ) : (
+                              <span className="muted">—</span>
+                            )}
+                          </span>
+                        )}
+                        <span>
+                          {iss.reviewerName ?? `（已删除：${iss.reviewerId ?? '—'}）`}
+                          {iss.organizationReviewerNames && iss.organizationReviewerNames.length > 1 && (
+                            <em className="muted preassign-issue-detail">
+                              同稿同机构：{iss.organizationReviewerNames.join('、')}
+                            </em>
+                          )}
+                        </span>
+                        <span>
+                          <span className="stress-chip stress-chip--red">{issueLabel[iss.reason] ?? iss.reason}</span>
+                          <span className="muted preassign-issue-detail">{iss.message}</span>
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                )
+              })()}
             </div>
             {result.reasons
               .filter((r) => r.kind !== 'preassignment')
@@ -178,7 +208,14 @@ export function ResultPanel({ data, result, stale, onExport, onApplySwap }: Resu
                     const rv = reviewerMap.get(a.reviewerId)
                     return (
                       <div className={`assignee ${a.topicMatched ? 'is-match' : 'is-nomatch'}`} key={a.reviewerId}>
-                        <span className="assignee-name">{rv?.name ?? a.reviewerId}</span>
+                        <span className="assignee-name">
+                          {rv?.name ?? a.reviewerId}
+                          {rv && (rv.organization ?? '').trim() && (
+                            <em className="assignee-org" title="评审人机构（同一稿件每机构至多一人）">
+                              🏛 {(rv.organization ?? '').trim()}
+                            </em>
+                          )}
+                        </span>
                         {a.preassigned ? (
                           <span className="badge badge-preassigned" title="该分派来自稿件编辑区的预指派（硬约束）">
                             📌 预指派
@@ -219,6 +256,7 @@ export function ResultPanel({ data, result, stale, onExport, onApplySwap }: Resu
             <div className="load-row" key={l.reviewerId}>
               <span className="load-name" title={rv?.name}>
                 {rv?.name ?? l.reviewerId}
+                {rv && (rv.organization ?? '').trim() && <em className="load-org" title="评审人机构">🏛 {(rv.organization ?? '').trim()}</em>}
                 {forcedCount > 0 && <em className="load-preassigned" title="其中来自预指派的名额">📌 {forcedCount}</em>}
               </span>
               <div className="load-bar">

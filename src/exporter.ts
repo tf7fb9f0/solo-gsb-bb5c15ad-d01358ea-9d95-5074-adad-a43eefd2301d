@@ -12,6 +12,8 @@ export interface ExportPayload {
     paperTitle: string
     reviewerId: string
     reviewerName: string
+    /** 评审人机构（去首尾空白；空串表示无机构） */
+    reviewerOrganization: string
     topicMatched: boolean
     matchedTags: string[]
     /** 是否来自预指派硬约束（非预指派缺省为 false） */
@@ -20,6 +22,8 @@ export interface ExportPayload {
   reviewerLoads: Array<{
     reviewerId: string
     reviewerName: string
+    /** 评审人机构（去首尾空白；空串表示无机构） */
+    reviewerOrganization: string
     assigned: number
     capacity: number
     utilization: number
@@ -39,6 +43,7 @@ export function buildExportPayload(data: AppData, result: AssignmentSuccess): Ex
       paperTitle: paperMap.get(a.paperId)?.title ?? a.paperId,
       reviewerId: a.reviewerId,
       reviewerName: reviewerMap.get(a.reviewerId)?.name ?? a.reviewerId,
+      reviewerOrganization: (reviewerMap.get(a.reviewerId)?.organization ?? '').trim(),
       topicMatched: a.topicMatched,
       matchedTags: a.matchedTags,
       preassigned: a.preassigned === true
@@ -46,6 +51,7 @@ export function buildExportPayload(data: AppData, result: AssignmentSuccess): Ex
     reviewerLoads: result.loads.map((l) => ({
       reviewerId: l.reviewerId,
       reviewerName: reviewerMap.get(l.reviewerId)?.name ?? l.reviewerId,
+      reviewerOrganization: (reviewerMap.get(l.reviewerId)?.organization ?? '').trim(),
       assigned: l.assigned,
       capacity: l.capacity,
       utilization: l.capacity > 0 ? Number((l.assigned / l.capacity).toFixed(3)) : 0
@@ -84,6 +90,8 @@ export interface StressExportPayload {
     bottleneckReviewers?: Array<{
       reviewerId: string
       reviewerName: string
+      /** 评审人机构（去首尾空白；空串表示无机构） */
+      reviewerOrganization: string
       capacity: number
       eligiblePaperCount: number
       capacityForGroup: number
@@ -123,6 +131,7 @@ export function buildStressExportPayload(data: AppData, report: StressTestReport
       bottleneckReviewers: s.bottleneckReviewers?.map((b) => ({
         reviewerId: b.reviewerId,
         reviewerName: reviewerMap.get(b.reviewerId)?.name ?? b.reviewerId,
+        reviewerOrganization: (reviewerMap.get(b.reviewerId)?.organization ?? '').trim(),
         capacity: b.capacity,
         eligiblePaperCount: b.eligiblePaperCount,
         capacityForGroup: b.capacityForGroup

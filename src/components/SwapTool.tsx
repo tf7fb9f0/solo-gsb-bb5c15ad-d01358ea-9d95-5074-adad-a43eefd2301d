@@ -49,7 +49,8 @@ export function SwapTool({ data, result, onApply }: SwapToolProps) {
         <h3 className="subhead swap-title">🔀 分派互换（一换一）</h3>
         <p className="muted swap-desc">
           选择两位<strong>已有任务</strong>的评审人，枚举其任务之间所有一换一候选；
-          自动排除同稿（交换后组合不变）、交换后触发利益冲突、让同一评审人重复承担同一稿件的项，
+          自动排除同稿（交换后组合不变）、交换后触发利益冲突、让同一评审人重复承担同一稿件、
+          让<strong>同一稿件出现同一机构两位评审人</strong>（机构去重硬约束）的项，
           以及<strong>预指派</strong>分派（硬约束不允许互换换走），
           候选按主题匹配净增从高到低排列。确认后仅改派当前结果，录入数据不变。
         </p>
@@ -124,11 +125,13 @@ export function SwapTool({ data, result, onApply }: SwapToolProps) {
             {(enumeration.excluded.samePaper +
               enumeration.excluded.conflict +
               enumeration.excluded.duplicate +
+              enumeration.excluded.organization +
               enumeration.excluded.preassigned >
               0) && (
               <span className="muted">
                 （已排除：同稿/组合不变 {enumeration.excluded.samePaper}，利益冲突 {enumeration.excluded.conflict}
-                ，重复承担 {enumeration.excluded.duplicate}，预指派 {enumeration.excluded.preassigned}）
+                ，重复承担 {enumeration.excluded.duplicate}，同机构 {enumeration.excluded.organization}
+                ，预指派 {enumeration.excluded.preassigned}）
               </span>
             )}
           </div>
