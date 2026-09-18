@@ -19,6 +19,7 @@ const issueLabel: Record<string, string> = {
   'paper-missing': '稿件已不存在',
   'reviewer-missing': '评审人已不存在',
   conflict: '存在利益冲突',
+  'org-duplicate': '同稿重复机构',
   'paper-overflow': '超过该稿件名额',
   'reviewer-overload': '超过评审人容量'
 }
@@ -118,11 +119,24 @@ function PaperCard({
   const assignedReviewerIds = new Set(own.map((pa) => pa.reviewerId))
   const full = own.length >= paper.reviewsRequired
 
-  // 标记本条预指派在当前数据下是否有效（冲突 / 超容量等），供卡片内联提示
+  // 标记本条预指派在当前数据下是否有效（冲突 / 重复机构 / 超容量等），供卡片内联提示
   const statusOf = (pa: PreAssignment): { ok: boolean; label?: string } => {
     const rv = reviewerById.get(pa.reviewerId)
     if (!rv) return { ok: false, label: '评审人已不存在' }
     if (rv.conflictPaperIds.includes(paper.id)) return { ok: false, label: '利益冲突' }
+    // 机构去重：同一稿件的预指派中，非空机构（去首尾空白后相同）不得重复
+    const ownOrg = (rv.organization ?? '').trim()
+    if (ownOrg) {
+      const dup = own.find((other) => {
+        if (other.id === pa.id) return false
+        const otherRv = reviewerById.get(other.reviewerId)
+        return (otherRv?.organization ?? '').trim() === ownOrg
+      })
+      if (dup) {
+        const dupName = reviewerById.get(dup.reviewerId)?.name ?? '另一评审人'
+        return { ok: false, label: `与 ${dupName} 同机构（${ownOrg}）` }
+      }
+    }
     const reviewerOwn = preAssignments.filter((x) => x.reviewerId === rv.id)
     if (reviewerOwn.length > rv.capacity) return { ok: false, label: `该评审人预占 ${reviewerOwn.length} 超容量 ${rv.capacity}` }
     if (own.length > paper.reviewsRequired) return { ok: false, label: `超名额（需 ${paper.reviewsRequired}）` }
@@ -214,6 +228,13 @@ function PaperCard({
                   const conflicting = r.conflictPaperIds.includes(paper.id)
                   const reviewerOwnCount = preAssignments.filter((pa) => pa.reviewerId === r.id).length
                   const overloaded = reviewerOwnCount >= r.capacity
+                  const org = (r.organization ?? '').trim()
+                  const orgTaken =
+                    !!org &&
+                    own.some((pa) => {
+                      const other = reviewerById.get(pa.reviewerId)
+                      return (other?.organization ?? '').trim() === org
+                    })
                   return (
                     <button
                       type="button"
@@ -226,11 +247,15 @@ function PaperCard({
                     >
                       <span className="preassign-plus">＋</span>
                       <span>{r.name}</span>
+                      {org && <em className="tag-overlap-hint preassign-org-hint">🏛 {org}</em>}
                       <span className="muted">
                         预占 {reviewerOwnCount}/{r.capacity}
                       </span>
                       {conflicting && <em className="tag-overlap-hint preassign-conflict-hint">与该稿有利益冲突</em>}
                       {!conflicting && overloaded && <em className="tag-overlap-hint preassign-conflict-hint">预占将超容量</em>}
+                      {!conflicting && !overloaded && orgTaken && (
+                        <em className="tag-overlap-hint preassign-conflict-hint">与已指定评审人同机构</em>
+                      )}
                     </button>
                   )
                 })}

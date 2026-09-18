@@ -256,6 +256,26 @@ body {
   outline: none;
   border-color: var(--blue);
 }
+.text-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.text-field input {
+  width: 160px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px;
+}
+.text-field input:focus {
+  outline: none;
+  border-color: var(--blue);
+}
 .conflict-note {
   margin-top: 10px;
   color: var(--amber);
@@ -1011,6 +1031,11 @@ body {
   color: #b5a4ff;
   border: 1px solid rgba(124, 92, 255, 0.5);
 }
+.badge-org {
+  background: rgba(230, 162, 60, 0.16);
+  color: #d29a3c;
+  border: 1px solid rgba(230, 162, 60, 0.45);
+}
 .stat-pre {
   color: #b5a4ff !important;
 }
@@ -1032,7 +1057,7 @@ body {
 }
 .preassign-issue-row {
   display: grid;
-  grid-template-columns: minmax(140px, 1.2fr) minmax(120px, 1fr) 2fr;
+  grid-template-columns: minmax(140px, 1.2fr) minmax(120px, 1fr) minmax(90px, 0.9fr) 2fr;
   gap: 10px;
   align-items: baseline;
   background: var(--bg-soft);

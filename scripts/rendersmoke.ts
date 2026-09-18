@@ -15,6 +15,7 @@ import { createSampleData } from '../src/sampleData'
 import { solveAssignment, computeMatchedTags } from '../src/engine/solver'
 import { ResultPanel } from '../src/components/ResultPanel'
 import { PapersPanel } from '../src/components/PapersPanel'
+import { ReviewersPanel } from '../src/components/ReviewersPanel'
 import { buildExportPayload } from '../src/exporter'
 import type { AppData } from '../src/types'
 
@@ -134,7 +135,57 @@ console.log('✓ 示例数据渲染成功，长度', html2.length)
   console.log('✓ 预指派成功结果与 JSON 导出标注渲染成功')
 }
 
-// 旧数据兼容：localStorage 中没有 preAssignments 字段时，应用仍可正常渲染与求解
+// 机构去重：评审人编辑区有机构输入；结果展示机构徽章；导出含机构；预指派重复机构整体拒绝
+{
+  const base = createSampleData()
+  const data: AppData = {
+    ...base,
+    reviewers: base.reviewers.map((r, i) => ({ ...r, organization: ['智研院', '北河大学', '星河计算所', '启明实验室'][i] }))
+  }
+
+  const reviewersHtml = renderToString(
+    React.createElement(ReviewersPanel, { papers: data.papers, reviewers: data.reviewers, onChange: () => {} })
+  )
+  if (!reviewersHtml.includes('机构')) throw new Error('机构字段未渲染')
+  if (!reviewersHtml.includes('北河大学')) throw new Error('机构值未渲染')
+  console.log('✓ 评审人机构字段渲染成功')
+
+  const solved = solveAssignment(data)
+  if (!solved.feasible) throw new Error('示例机构数据应可行')
+  const okHtml = renderToString(
+    React.createElement(ResultPanel, { data, result: solved, stale: false, onExport: () => {}, onApplySwap: () => {} })
+  )
+  if (!okHtml.includes('北河大学')) throw new Error('成功结果未展示机构')
+  const payload = buildExportPayload(data, solved)
+  if (!payload.assignments.every((a) => typeof a.reviewerOrganization === 'string')) throw new Error('导出缺少机构字段')
+  if (!payload.reviewerLoads.every((l) => typeof l.reviewerOrganization === 'string')) throw new Error('负载导出缺少机构字段')
+  console.log('✓ 机构徽章与导出机构信息渲染成功')
+
+  // 预指派让同稿出现重复机构 → 整体拒绝，结果区列出稿件/机构/相关评审人
+  const dup: AppData = {
+    papers: [base.papers[0]],
+    reviewers: [
+      { id: 'rx', name: 'X 甲', tags: [], capacity: 2, organization: '同机构', conflictPaperIds: [] },
+      { id: 'ry', name: 'X 乙', tags: [], capacity: 2, organization: ' 同机构 ', conflictPaperIds: [] },
+      { id: 'rz', name: 'Z 丙', tags: [], capacity: 2, organization: '别的机构', conflictPaperIds: [] }
+    ],
+    preAssignments: [
+      { id: 'pa_x', paperId: base.papers[0].id, reviewerId: 'rx' },
+      { id: 'pa_y', paperId: base.papers[0].id, reviewerId: 'ry' }
+    ]
+  }
+  const fail = solveAssignment(dup)
+  if (fail.feasible) throw new Error('预指派重复机构应整体拒绝')
+  const failHtml = renderToString(
+    React.createElement(ResultPanel, { data: dup, result: fail, stale: false, onExport: () => {}, onApplySwap: () => {} })
+  )
+  if (!failHtml.includes('同稿重复机构')) throw new Error('重复机构原因标签未渲染')
+  if (!failHtml.includes('同机构')) throw new Error('结果区未列出机构名')
+  if ('assignments' in fail) throw new Error('重复机构时不得返回部分结果')
+  console.log('✓ 预指派重复机构整体拒绝（列出稿件/机构/相关评审人、无部分结果）渲染成功')
+}
+
+// 旧数据兼容：localStorage 中没有 preAssignments（以及评审人没有 organization）字段时，应用仍可正常渲染与求解
 {
   const legacy = { papers: createSampleData().papers, reviewers: createSampleData().reviewers }
   store.set('blind-review-desk:data:v1', JSON.stringify(legacy))
@@ -142,5 +193,6 @@ console.log('✓ 示例数据渲染成功，长度', html2.length)
   if (!html.includes('盲审分配台')) throw new Error('旧数据渲染异常')
   const solved = solveAssignment(legacy as AppData)
   if (!solved.feasible || solved.objective.preassignedCount !== 0) throw new Error('旧数据求解/预指派缺省值异常')
-  console.log('✓ 旧数据（无 preAssignments 字段）兼容正常')
+  console.log('✓ 旧数据（无 preAssignments / organization 字段）兼容正常')
 }
+

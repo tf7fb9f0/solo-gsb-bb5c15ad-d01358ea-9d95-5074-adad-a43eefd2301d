@@ -22,6 +22,7 @@ const issueLabel: Record<string, string> = {
   'paper-missing': '引用稿件不存在',
   'reviewer-missing': '引用评审人不存在',
   conflict: '与利益冲突冲突',
+  'org-duplicate': '同稿重复机构',
   'paper-overflow': '同篇预指派超过名额',
   'reviewer-overload': '单人预占超过容量'
 }
@@ -33,8 +34,8 @@ export function ResultPanel({ data, result, stale, onExport, onApplySwap }: Resu
         <p>点击页面顶部的「▶ 生成分派」按钮，系统将在浏览器本地完成整数规划求解。</p>
         <ul>
           <li>
-            <strong>硬约束</strong>：预指派必须入选、利益冲突回避、评审人容量上限、每篇稿件所需评审人数，
-            四者必须全部满足；
+            <strong>硬约束</strong>：预指派必须入选、利益冲突回避、评审人容量上限、每篇稿件所需评审人数、
+            同一稿件每个机构至多一人（机构去重），五者必须全部满足；
           </li>
           <li>
             <strong>优化目标</strong>：先最大化主题标签匹配，再最小化评审人最大负载（负载均衡）。
@@ -61,12 +62,14 @@ export function ResultPanel({ data, result, stale, onExport, onApplySwap }: Resu
                 <div className="preassign-issue-row preassign-issue-head">
                   <span>稿件</span>
                   <span>评审人</span>
+                  <span>机构</span>
                   <span>原因</span>
                 </div>
                 {preReason.issues.map((iss) => (
                   <div className="preassign-issue-row" key={iss.preAssignmentId}>
                     <span>{iss.paperTitle ? `《${iss.paperTitle}》` : `（已删除：${iss.paperId ?? '—'}）`}</span>
                     <span>{iss.reviewerName ?? `（已删除：${iss.reviewerId ?? '—'}）`}</span>
+                    <span>{iss.organization ? `🏛 ${iss.organization}` : '—'}</span>
                     <span>
                       <span className="stress-chip stress-chip--red">{issueLabel[iss.reason] ?? iss.reason}</span>
                       <span className="muted preassign-issue-detail">{iss.message}</span>
@@ -179,6 +182,11 @@ export function ResultPanel({ data, result, stale, onExport, onApplySwap }: Resu
                     return (
                       <div className={`assignee ${a.topicMatched ? 'is-match' : 'is-nomatch'}`} key={a.reviewerId}>
                         <span className="assignee-name">{rv?.name ?? a.reviewerId}</span>
+                        {rv?.organization ? (
+                          <span className="badge badge-org" title="评审人所属机构：同一稿件每个机构至多一人">
+                            🏛 {rv.organization}
+                          </span>
+                        ) : null}
                         {a.preassigned ? (
                           <span className="badge badge-preassigned" title="该分派来自稿件编辑区的预指派（硬约束）">
                             📌 预指派

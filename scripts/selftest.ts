@@ -22,8 +22,20 @@ const mk = (
   preAssignments: AppData['preAssignments'] = []
 ): AppData => ({ papers, reviewers, preAssignments })
 const P = (id: string, title: string, reviewsRequired: number, tags: string[] = []) => ({ id: id, title, reviewsRequired, tags })
-const R = (id: string, name: string, capacity: number, tags: string[] = [], conflictPaperIds: string[] = []) => ({
-  id, name, capacity, tags, conflictPaperIds
+const R = (
+  id: string,
+  name: string,
+  capacity: number,
+  tags: string[] = [],
+  conflictPaperIds: string[] = [],
+  organization = ''
+) => ({
+  id,
+  name,
+  capacity,
+  tags,
+  conflictPaperIds,
+  organization
 })
 
 // 1. 示例数据：可行且匹配/均衡合理
@@ -643,6 +655,272 @@ const PA = (id: string, paperId: string, reviewerId: string) => ({ id, paperId, 
   const out = runStressTest(d)
   console.log('用例30 预指派失效时压力测试不可运行')
   check('runnable=false 且原因含预指派问题', !out.runnable && 'reasons' in out && out.reasons.some((m) => m.includes('预指派')))
+}
+
+/* ============================ 机构去重（硬约束） ============================ */
+
+/** 校验一份成功结果满足机构去重：同一稿件每个非空机构至多一人 */
+function assertOrgDedup(d: AppData, res: AssignmentSuccess): boolean {
+  const orgOf = new Map(d.reviewers.map((r) => [r.id, (r.organization ?? '').trim()]))
+  for (const paper of d.papers) {
+    const seen = new Set<string>()
+    for (const a of res.assignments.filter((x) => x.paperId === paper.id)) {
+      const org = orgOf.get(a.reviewerId) ?? ''
+      if (org) {
+        if (seen.has(org)) return false
+        seen.add(org)
+      }
+    }
+  }
+  return true
+}
+
+// 31. 基本去重：同稿两名同机构评审人，需 2 人 → 必须另选其他机构
+{
+  const d = mk(
+    [P('p1', 'A', 2)],
+    [
+      R('a', '甲', 2, [], [], '清华'),
+      R('b', '乙', 2, [], [], '清华'),
+      R('c', '丙', 2, [], [], '北大'),
+      R('z', '丁', 2, [], [], '') // 空机构：独立
+    ]
+  )
+  const res = solveAssignment(d)
+  console.log('用例31 同稿机构去重')
+  check('可行', res.feasible, res.feasible ? '' : JSON.stringify(res.reasons.map((r) => r.kind)))
+  if (res.feasible) {
+    check('恰好分配 2 人', res.assignments.length === 2)
+    check('同稿机构不重复（结果只含清华 1 人）', assertOrgDedup(d, res))
+    const ids = res.assignments.map((a) => a.reviewerId)
+    check('两名清华中恰好入选一人', ids.filter((x) => x === 'a' || x === 'b').length === 1, JSON.stringify(ids))
+    check('另一人来自不同机构（丙）', ids.includes('c'))
+  }
+}
+
+// 32. 机构值归一化：首尾空白忽略；空机构不合并
+{
+  const d = mk(
+    [P('p1', 'A', 3)],
+    [
+      R('a', '甲', 3, [], [], '  清华 '),
+      R('b', '乙', 3, [], [], '清华'),
+      R('c', '丙', 3, [], [], ''),
+      R('e', '戊', 3, [], [], '   '),
+      R('f', '己', 3, [], [], '北大')
+    ]
+  )
+  const res = solveAssignment(d)
+  console.log('用例32 机构归一化 / 空值不合并')
+  check('可行', res.feasible, res.feasible ? '' : JSON.stringify(res.reasons.map((r) => r.kind)))
+  if (res.feasible) {
+    check('首尾空白后相同视为同机构（甲、乙只入 1 人）', assertOrgDedup(d, res))
+    const ids = res.assignments.map((a) => a.reviewerId)
+    check('两个空机构（丙、戊）可同时入选（空值不合并）', ids.includes('c') && ids.includes('e'), JSON.stringify(ids))
+  }
+}
+
+// 33. 机构导致单篇名额不足：只有 2 个不同机构名额却需 3 人
+{
+  const d = mk(
+    [P('p1', 'A', 3)],
+    [
+      R('a', '甲', 5, [], [], 'X 机构'),
+      R('b', '乙', 5, [], [], 'X 机构'),
+      R('c', '丙', 5, [], [], 'Y 机构')
+    ]
+  )
+  const res = solveAssignment(d)
+  console.log('用例33 机构致单篇名额不足')
+  check('不可行', !res.feasible)
+  if (!res.feasible) {
+    check('给出 paper-eligible 原因', res.reasons.some((r) => r.kind === 'paper-eligible'), JSON.stringify(res.reasons.map((r) => r.kind)))
+    check('原因说明提及机构', res.reasons.some((r) => r.message.includes('机构')))
+  }
+}
+
+// 34. 机构导致的组合性瓶颈：p1,p2 各需 2；甲/乙同机构 X，丙/丁同机构 Y
+{
+  const d = mk(
+    [P('p1', 'A', 2), P('p2', 'B', 2)],
+    [
+      R('a', '甲', 2, [], [], 'X'),
+      R('b', '乙', 2, [], [], 'X'),
+      R('c', '丙', 2, [], [], 'Y'),
+      R('dd', '丁', 2, [], [], 'Y')
+    ]
+  )
+  const res = solveAssignment(d)
+  console.log('用例34 机构组合性瓶颈')
+  // 每篇至多取 X 一人 + Y 一人 = 2，两篇共需 4，X 两人 + Y 两人 = 4 名额 → 可行（每篇一 X 一 Y）
+  check('恰好可行（每篇一 X 一 Y）', res.feasible, res.feasible ? '' : JSON.stringify(res.reasons.map((r) => r.kind)))
+
+  // 纯机构组合性瓶颈：三篇各需 2，可选机构恰为 X、Y（每篇单篇名额=2，单篇不缺）。
+  // X 有 甲、乙 两人（容量各 2），Y 只有 丙 一人（容量 2）。
+  // 不做机构去重时可行：p1={甲,乙}、p2={甲,丙}、p3={乙,丙}（每人 2 篇）；
+  // 机构去重后每篇必须“一 X 一 Y”，丙（Y 唯一一人）容量 2 至多覆盖两篇 → 缺口 1。
+  const d2 = mk(
+    [P('p1', 'A', 2), P('p2', 'B', 2), P('p3', 'C', 2)],
+    [
+      R('a', '甲', 2, [], [], 'X'),
+      R('b', '乙', 2, [], [], 'X'),
+      R('c', '丙', 2, [], [], 'Y')
+    ]
+  )
+  const res2 = solveAssignment(d2)
+  check('三篇机构名额单篇不缺但整体调不开 → 不可行', !res2.feasible)
+  if (!res2.feasible) {
+    check('无单篇不足（每篇都有 X、Y 两个名额）', !res2.reasons.some((r) => r.kind === 'paper-eligible'), JSON.stringify(res2.reasons.map((r) => r.kind)))
+    const sub = res2.reasons.find((r) => r.kind === 'subset-bottleneck')
+    check('给出 subset-bottleneck 且缺口=1', !!sub && sub.deficit === 1, JSON.stringify({ k: res2.reasons.map((r) => r.kind), d: sub?.deficit }))
+  }
+}
+
+// 35. 机构约束不干扰既有优化：无机构信息时结果与旧行为一致（示例数据空/独立机构）
+{
+  const d = mk(
+    [P('p1', 'A', 1)],
+    [R('a', '甲', 1, [], [], 'X'), R('b', '乙', 1, [], [], 'X')]
+  )
+  const res = solveAssignment(d)
+  console.log('用例35 单名额不受机构影响')
+  check('可行且 1 人', res.feasible && res.assignments.length === 1)
+}
+
+// 36. 预指派造成同稿重复机构：整体拒绝并列出稿件、机构、相关评审人
+{
+  const d = mk(
+    [P('p1', 'A', 2)],
+    [
+      R('a', '甲', 2, [], [], '清华'),
+      R('b', '乙', 2, [], [], ' 清华 '),
+      R('c', '丙', 2, [], [], '北大')
+    ],
+    [PA('pa1', 'p1', 'a'), PA('pa2', 'p1', 'b')]
+  )
+  const res = solveAssignment(d)
+  console.log('用例36 预指派重复机构')
+  check('不可行', !res.feasible)
+  if (!res.feasible) {
+    const pre = res.reasons.find((r) => r.kind === 'preassignment')
+    check('两条都报 org-duplicate', pre?.issues?.length === 2 && pre.issues.every((i) => i.reason === 'org-duplicate'), JSON.stringify(pre?.issues))
+    const iss = pre!.issues![0]
+    check('issue 带机构名与相关评审人', iss.organization === '清华' && (iss.relatedReviewerNames?.length ?? 0) === 1, JSON.stringify(iss))
+    check('不返回部分结果', !('assignments' in res))
+  }
+}
+
+// 37. 预指派占住机构名额后，自由分派不得再选同机构（预检通过、求解共同满足）
+{
+  const d = mk(
+    [P('p1', 'A', 2)],
+    [
+      R('a', '甲', 2, [], [], '清华'),
+      R('b', '乙', 2, [], [], '清华'),
+      R('c', '丙', 2, [], [], '北大')
+    ],
+    [PA('pa1', 'p1', 'a')]
+  )
+  const res = solveAssignment(d)
+  console.log('用例37 预指派占机构名额')
+  check('可行', res.feasible, res.feasible ? '' : JSON.stringify(res.reasons.map((r) => r.kind)))
+  if (res.feasible) {
+    const ids = res.assignments.map((x) => x.reviewerId)
+    check('另一人不能是同机构乙（选丙）', ids.includes('a') && ids.includes('c') && !ids.includes('b'), JSON.stringify(ids))
+  }
+}
+
+// 38. 空机构预指派不与任何机构冲突：预指派 1 空机构 + 1 清华，仍可再选另一个空机构
+{
+  const d = mk(
+    [P('p1', 'A', 3)],
+    [
+      R('a', '甲', 3, [], [], ''),
+      R('b', '乙', 3, [], [], ''),
+      R('c', '丙', 3, [], [], '清华')
+    ],
+    [PA('pa1', 'p1', 'a'), PA('pa2', 'p1', 'c')]
+  )
+  const res = solveAssignment(d)
+  console.log('用例38 空机构预指派不合并')
+  check('可行（空机构甲 + 清华丙 + 空机构乙）', res.feasible, res.feasible ? '' : JSON.stringify(res.reasons.map((r) => r.kind)))
+  if (res.feasible) check('三人全部入选', res.assignments.length === 3)
+}
+
+// 39. 互换排除同机构：换后会让目标稿件出现同机构两人的候选被排除
+{
+  const d = mk(
+    [P('p1', 'A', 2), P('p2', 'B', 2)],
+    [
+      R('a', 'Alice', 2, [], [], 'X'),
+      R('b', 'Bob', 2, [], [], 'Y'),
+      R('c', 'Carol', 2, [], [], 'X'), // 与 Alice 同机构 X
+      R('dd', 'Dave', 2, [], [], 'Z')
+    ]
+  )
+  // 现状：p1 = b(Y)、c(X)；p2 = a(X)、dd(Z)。互换 a×c：
+  //  a 的 p2 × c 的 p1 → 换后 a 评 p1（p1 上 c 离开、无其他 X），c 评 p2（p2 上 a 离开、无其他 X）→ 合法。
+  // 构造会撞机构的现状：p1 = b(Y)、c(X)；p2 = a(X)、dd(Z)，枚举 a×b：
+  //  a 的 p2 × b 的 p1 → a 换入 p1（p1 上已有 c 为 X，且 b 为 Y 离开）→ 撞 X，排除；
+  //  b 换入 p2（p2 上 a 离开、dd 为 Z）→ 不撞。整体候选仍应被排除（计数 organization）。
+  const res = makeSuccess(d, [
+    ['p1', 'b'],
+    ['p1', 'c'],
+    ['p2', 'a'],
+    ['p2', 'dd']
+  ])
+  const en = enumerateSwaps(d, res, 'a', 'b')
+  console.log('用例39 互换机构排除')
+  check('候选被排除（同稿重复机构计数=1）', en.candidates.length === 0 && en.excluded.organization === 1, JSON.stringify(en.excluded))
+
+  // 防御性应用：伪造一个换后撞机构的候选，applySwapCandidate 返回 null
+  const bogus: SwapCandidate = {
+    reviewerAId: 'a',
+    reviewerBId: 'b',
+    sideA: { reviewerId: 'a', fromPaperId: 'p2', toPaperId: 'p1', fromMatchedTags: [], toMatchedTags: [], fromMatched: false, toMatched: false },
+    sideB: { reviewerId: 'b', fromPaperId: 'p1', toPaperId: 'p2', fromMatchedTags: [], toMatchedTags: [], fromMatched: false, toMatched: false },
+    deltaMatches: 0
+  }
+  check('applySwapCandidate 拒绝撞机构候选', applySwapCandidate(d, res, bogus) === null)
+}
+
+// 40. 旧本地数据缺机构字段：按空值加载，可正常求解；导出补机构字段
+{
+  const { loadData, saveData } = await import('../src/storage')
+  const store = new Map<string, string>()
+  const stub = {
+    getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k)
+  }
+  ;(globalThis as any).localStorage = stub
+  // 旧数据：评审人没有 organization 字段
+  const legacy = {
+    papers: [P('p1', 'A', 1)],
+    reviewers: [{ id: 'a', name: '甲', tags: [], capacity: 1, conflictPaperIds: [] }]
+  }
+  saveData({ papers: [], reviewers: [], preAssignments: [] })
+  store.set('blind-review-desk:data:v1', JSON.stringify(legacy))
+  const loaded = loadData()
+  console.log('用例40 旧数据机构缺省 / 导出补机构')
+  check('旧评审人按空机构加载', !!loaded && loaded.reviewers[0].organization === '')
+  const res = loaded ? solveAssignment(loaded) : null
+  check('旧数据可正常求解', !!res && res.feasible)
+  if (loaded && res?.feasible) {
+    const { buildExportPayload } = await import('../src/exporter')
+    const payload = buildExportPayload(loaded, res)
+    check('导出 assignments 含 reviewerOrganization 空串', payload.assignments[0].reviewerOrganization === '')
+    check('导出 reviewerLoads 含 reviewerOrganization 空串', payload.reviewerLoads[0].reviewerOrganization === '')
+  }
+}
+
+// 41. 压力测试指纹纳入机构：机构变化后指纹改变
+{
+  const d1 = mk([P('p1', 'A', 1)], [R('a', '甲', 2, [], [], 'X'), R('b', '乙', 2, [], [], 'Y')])
+  const f1 = stressFingerprint(d1)
+  const d2 = mk([P('p1', 'A', 1)], [R('a', '甲', 2, [], [], 'X'), R('b', '乙', 2, [], [], 'X')])
+  console.log('用例41 机构进入数据指纹')
+  check('机构变化指纹改变（报告立即过期）', stressFingerprint(d2) !== f1)
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`)

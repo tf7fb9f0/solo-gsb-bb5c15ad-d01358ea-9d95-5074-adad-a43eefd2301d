@@ -18,7 +18,7 @@ export function ReviewersPanel({ papers, reviewers, onChange }: ReviewersPanelPr
   const add = () =>
     onChange([
       ...reviewers,
-      { id: createId('rev'), name: `评审人 ${reviewers.length + 1}`, tags: [], capacity: 2, conflictPaperIds: [] }
+      { id: createId('rev'), name: `评审人 ${reviewers.length + 1}`, tags: [], capacity: 2, organization: '', conflictPaperIds: [] }
     ])
 
   const toggleConflict = (r: Reviewer, paperId: string) => {
@@ -51,6 +51,16 @@ export function ReviewersPanel({ papers, reviewers, onChange }: ReviewersPanelPr
                 placeholder="评审人姓名 / 编号"
                 onChange={(e) => update(r.id, { name: e.target.value })}
               />
+              <label className="text-field">
+                机构
+                <input
+                  className="input"
+                  value={r.organization ?? ''}
+                  placeholder="所属机构（可空）"
+                  title="去除首尾空白后完全相同者视为同一机构；同一稿件至多选择每个机构一人。留空仅代表该评审人本人，不与其他空值合并。"
+                  onChange={(e) => update(r.id, { organization: e.target.value })}
+                />
+              </label>
               <label className="num-field">
                 容量（最多审稿）
                 <input

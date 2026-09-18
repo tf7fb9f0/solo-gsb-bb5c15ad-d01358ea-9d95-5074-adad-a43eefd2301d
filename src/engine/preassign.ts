@@ -2,11 +2,11 @@
  * 预指派（pre-assignment）关系的校验与派生状态。
  *
  * 预指派是“生成分派”时必须满足的硬约束：给定的（稿件，评审人）对必须出现在最终分派中，
- * 与利益冲突、单人容量、每篇人数、同人不重复规则共同求解。
+ * 与利益冲突、单人容量、每篇人数、同人不重复、机构去重规则共同求解。
  *
  * 本模块只做预检与状态派生，不做目标优化：
  *  - {@link validatePreAssignments} 逐条检查引用是否存在、是否含利益冲突、
- *    同篇预指派是否超过名额、单人预占是否超过容量。
+ *    同篇预指派是否出现重复机构、是否超过名额、单人预占是否超过容量。
  *    任一问题都会让“生成分派”整体失败（不得生成部分结果），问题按条列出具体稿件、评审人、原因。
  *  - {@link derivePreAssignments} 供录入界面使用：把关系分为“有效”与“失效”两组，
  *    失效关系（引用的稿件/评审人已删除或已产生冲突等）保留在存储中并显式提示，用户可逐条移除。
@@ -38,7 +38,7 @@ export type PreIssueReason = PreAssignmentIssue['reason']
 /**
  * 逐条校验预指派关系。返回的 issues 与输入顺序一致；无问题时返回空数组。
  * 同一条关系可能同时命中多个问题（例如稿件不存在时无法再判断冲突），按以下优先级报首个原因：
- * paper-missing / reviewer-missing → conflict → 名额/容量超限（后两者按“组”聚合到每条关系上）。
+ * paper-missing / reviewer-missing → conflict → org-duplicate → 名额/容量超限（后两者按“组”聚合到每条关系上）。
  */
 export function validatePreAssignments(
   papers: Paper[],
@@ -48,13 +48,23 @@ export function validatePreAssignments(
   const paperMap = new Map(papers.map((p) => [p.id, p]))
   const reviewerMap = new Map(reviewers.map((r) => [r.id, r]))
 
+  /** 机构归一化：去除首尾空白；空值（未填机构）仅代表评审人本人，不参与机构合并 */
+  const orgKeyOf = (r: Reviewer) => (typeof r.organization === 'string' ? r.organization.trim() : '')
+
   // 组级计数：只统计“引用都存在”的关系
   const perPaper = new Map<string, PreAssignment[]>()
   const perReviewer = new Map<string, PreAssignment[]>()
+  // 机构重复组：按 (稿件, 非空机构) 聚合“引用都存在”的关系
+  const perPaperOrg = new Map<string, PreAssignment[]>()
   for (const pa of preAssignments) {
     if (paperMap.has(pa.paperId) && reviewerMap.has(pa.reviewerId)) {
       perPaper.set(pa.paperId, [...(perPaper.get(pa.paperId) ?? []), pa])
       perReviewer.set(pa.reviewerId, [...(perReviewer.get(pa.reviewerId) ?? []), pa])
+      const org = orgKeyOf(reviewerMap.get(pa.reviewerId)!)
+      if (org) {
+        const key = `${pa.paperId}|${org}`
+        perPaperOrg.set(key, [...(perPaperOrg.get(key) ?? []), pa])
+      }
     }
   }
   const overflowPapers = new Set(
@@ -63,6 +73,13 @@ export function validatePreAssignments(
   const overloadedReviewers = new Set(
     [...perReviewer.entries()].filter(([rid, list]) => list.length > (reviewerMap.get(rid)!.capacity || 0)).map(([rid]) => rid)
   )
+  const orgGroupByPa = new Map<string, { org: string; list: PreAssignment[] }>()
+  for (const [key, list] of perPaperOrg) {
+    if (list.length >= 2) {
+      const org = key.slice(key.indexOf('|') + 1)
+      for (const pa of list) orgGroupByPa.set(pa.id, { org, list })
+    }
+  }
 
   const issues: PreAssignmentIssue[] = []
   for (const pa of preAssignments) {
@@ -102,6 +119,23 @@ export function validatePreAssignments(
         reviewerName: reviewer.name,
         reason: 'conflict',
         message: `预指派要求把《${paper.title}》分给 ${reviewer.name}，但 ${reviewer.name} 已声明与该稿件存在利益冲突：两条硬约束无法同时满足，请解除冲突或移除该预指派。`
+      })
+      continue
+    }
+    const orgDup = orgGroupByPa.get(pa.id)
+    if (orgDup) {
+      const { org, list } = orgDup
+      const related = list.filter((x) => x.id !== pa.id).map((x) => reviewerMap.get(x.reviewerId)?.name ?? x.reviewerId)
+      issues.push({
+        preAssignmentId: pa.id,
+        paperId: paper.id,
+        reviewerId: reviewer.id,
+        paperTitle: paper.title,
+        reviewerName: reviewer.name,
+        organization: org,
+        relatedReviewerNames: related,
+        reason: 'org-duplicate',
+        message: `《${paper.title}》的预指派中，${reviewer.name} 与 ${related.join('、')} 同属机构“${org}”：同一稿件至多选择每个机构一人，请移除多余的预指派或调整评审人机构。`
       })
       continue
     }

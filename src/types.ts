@@ -16,6 +16,11 @@ export interface Reviewer {
   tags: string[]
   /** 最多承担的稿件数（容量） */
   capacity: number
+  /**
+   * 所属机构。去除首尾空白后完全相同者视为同一机构；
+   * 空字符串表示未填写机构，仅代表该评审人本人，不与其他空值合并。
+   */
+  organization: string
   /** 声明利益冲突的稿件 id */
   conflictPaperIds: string[]
 }
@@ -62,7 +67,6 @@ export type InfeasibleKind =
   | 'paper-eligible'
   | 'subset-bottleneck'
   | 'preassignment'
-
 /** 预指派关系在“生成分派”预检时被发现的具体问题（逐条列出稿件、评审人与原因） */
 export interface PreAssignmentIssue {
   /** 触发问题的预指派关系 id（界面可据此直接移除该条） */
@@ -73,11 +77,16 @@ export interface PreAssignmentIssue {
   paperTitle?: string
   /** 用于展示的评审人姓名（评审人不存在时缺省） */
   reviewerName?: string
+  /** 同稿重复机构时：该评审人所属机构（去除首尾空白后的完全相同值） */
+  organization?: string
+  /** 同稿重复机构时：与该评审人撞机构的其余相关评审人姓名 */
+  relatedReviewerNames?: string[]
   /** 问题类型 */
   reason:
     | 'paper-missing' // 引用的稿件已不存在
     | 'reviewer-missing' // 引用的评审人已不存在
     | 'conflict' // 稿件与评审人之间声明了利益冲突
+    | 'org-duplicate' // 同一稿件的预指派中出现了同机构的多名评审人
     | 'paper-overflow' // 同篇预指派人数超过该稿件所需人数
     | 'reviewer-overload' // 该评审人被预占名额超过其容量
   message: string

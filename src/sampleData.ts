@@ -15,10 +15,10 @@ export function createSampleData() {
       { id: p4, title: '联邦学习中的隐私泄露攻击与防御', reviewsRequired: 2, tags: ['安全', '机器学习'] }
     ],
     reviewers: [
-      { id: r1, name: 'Alice（机器学习）', tags: ['机器学习', 'NLP', '计算机视觉'], capacity: 2, conflictPaperIds: [p1] },
-      { id: r2, name: 'Bob（推荐/ML）', tags: ['机器学习', '推荐系统', 'NLP'], capacity: 2, conflictPaperIds: [] },
-      { id: r3, name: 'Carol（系统/数据库）', tags: ['分布式系统', '数据库', '存储'], capacity: 3, conflictPaperIds: [p3] },
-      { id: r4, name: 'Dave（安全/隐私）', tags: ['安全', '隐私', '机器学习'], capacity: 2, conflictPaperIds: [] }
+      { id: r1, name: 'Alice（机器学习）', tags: ['机器学习', 'NLP', '计算机视觉'], capacity: 2, organization: '智研院', conflictPaperIds: [p1] },
+      { id: r2, name: 'Bob（推荐/ML）', tags: ['机器学习', '推荐系统', 'NLP'], capacity: 2, organization: '北河大学', conflictPaperIds: [] },
+      { id: r3, name: 'Carol（系统/数据库）', tags: ['分布式系统', '数据库', '存储'], capacity: 3, organization: '星河计算所', conflictPaperIds: [p3] },
+      { id: r4, name: 'Dave（安全/隐私）', tags: ['安全', '隐私', '机器学习'], capacity: 2, organization: '启明实验室', conflictPaperIds: [] }
     ],
     preAssignments: []
   }

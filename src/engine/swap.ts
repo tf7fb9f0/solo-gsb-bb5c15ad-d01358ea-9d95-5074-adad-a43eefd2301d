@@ -13,12 +13,14 @@
  *  2. 无利益冲突：A 未声明回避 q、B 未声明回避 p；
  *  3. 不重复承担同一稿件：交换前 A 未评 q（即 q ∉ A 的现有稿件）、
  *     B 未评 p（即 p ∉ B 的现有稿件）。一换一是一对一替换，每位评审人的稿件数
- *     不变，因此「每篇稿件人数不变」与「个人容量不超限」天然保持，无需额外处理。
+ *     不变，因此「每篇稿件人数不变」与「个人容量不超限」天然保持，无需额外处理；
+ *  4. 不造成同稿机构重复：交换后 q 上不能已有与 A 同机构（去首尾空白后完全相同）的评审人，
+ *     p 上不能已有与 B 同机构的评审人。空机构仅代表评审人本人，不与任何机构（含其他空值）冲突。
  *
  * 候选按「主题匹配净增」从高到低排序，供界面预览后由用户确认；
  * 确认时仅在结果层改派，不触碰录入数据（AppData）。
  */
-import { computeMatchedTags } from './solver'
+import { computeMatchedTags, normalizeOrganization } from './solver'
 import type { AppData, AssignmentItem, AssignmentSuccess, Paper, Reviewer } from '../types'
 
 /** 单条一换一候选的交换单侧描述（谁把自己的哪篇换成对方的哪篇） */
@@ -58,6 +60,8 @@ export interface SwapExclusionCounts {
   duplicate: number
   /** 被换走的分派中有预指派（硬约束不允许互换移除预指派） */
   preassigned: number
+  /** 交换后同一稿件出现同机构的两名评审人（机构去重硬约束） */
+  organization: number
 }
 
 export interface SwapEnumeration {
@@ -81,7 +85,7 @@ function papersOf(assignments: AssignmentItem[], reviewerId: string): Set<string
  * 要求两位评审人当前都至少承担一篇稿件，否则返回空列表。
  */
 export function enumerateSwaps(data: AppData, result: AssignmentSuccess, reviewerAId: string, reviewerBId: string): SwapEnumeration {
-  const excluded: SwapExclusionCounts = { samePaper: 0, conflict: 0, duplicate: 0, preassigned: 0 }
+  const excluded: SwapExclusionCounts = { samePaper: 0, conflict: 0, duplicate: 0, preassigned: 0, organization: 0 }
   if (!reviewerAId || !reviewerBId || reviewerAId === reviewerBId) {
     return { candidates: [], excluded }
   }
@@ -104,6 +108,20 @@ export function enumerateSwaps(data: AppData, result: AssignmentSuccess, reviewe
   const conflictsOf = (r: Reviewer) => new Set(r.conflictPaperIds)
   const aConflicts = conflictsOf(reviewerA)
   const bConflicts = conflictsOf(reviewerB)
+
+  // 机构去重：归一化机构键（空值仅代表本人），并按稿件索引当前评审人机构集合
+  const orgOf = new Map<string, string>()
+  for (const r of data.reviewers) orgOf.set(r.id, normalizeOrganization(r.organization))
+  const orgSetByPaper = new Map<string, Set<string>>()
+  for (const a of result.assignments) {
+    const org = orgOf.get(a.reviewerId)
+    if (!org) continue
+    const set = orgSetByPaper.get(a.paperId) ?? new Set<string>()
+    set.add(org)
+    orgSetByPaper.set(a.paperId, set)
+  }
+  const aOrg = orgOf.get(reviewerAId) ?? ''
+  const bOrg = orgOf.get(reviewerBId) ?? ''
 
   const candidates: SwapCandidate[] = []
 
@@ -135,6 +153,18 @@ export function enumerateSwaps(data: AppData, result: AssignmentSuccess, reviewe
       // 交换后 A 仍承担 q（相当于 q 没换出去却又算了一次），造成重复。
       if (aPaperSet.has(q) || bPaperSet.has(p)) {
         excluded.duplicate++
+        continue
+      }
+
+      // 排除项 4：交换后同一稿件出现同机构的两名评审人（机构去重硬约束）。
+      // 换走的 A/B 自身机构先从目标稿件集合中移除（B 正离开 q、A 正离开 p），
+      // 再判断换入者是否与稿件上“其余”评审人撞机构；空机构不与任何机构冲突。
+      const qOrgs = orgSetByPaper.get(q)
+      const pOrgs = orgSetByPaper.get(p)
+      const collideQ = !!aOrg && qOrgs ? (qOrgs.has(aOrg) && !(bOrg === aOrg)) : false
+      const collideP = !!bOrg && pOrgs ? (pOrgs.has(bOrg) && !(aOrg === bOrg)) : false
+      if (collideQ || collideP) {
+        excluded.organization++
         continue
       }
 
@@ -200,7 +230,7 @@ function rebuildLoads(
  * 应用一条一换一候选，返回交换后的新成功结果。
  *
  * 只更新传入的结果（其副本），不修改录入数据 data，也不修改原 result。
- * 会再次复核全部硬约束（冲突 / 不重复 / 容量），任一不满足则拒绝并返回 null，
+ * 会再次复核全部硬约束（冲突 / 不重复 / 容量 / 机构去重），任一不满足则拒绝并返回 null，
  * 防止使用过期候选（例如数据刚变化）做出违规改派。
  */
 export function applySwapCandidate(
@@ -236,7 +266,6 @@ export function applySwapCandidate(
   const aPaperSet = papersOf(result.assignments, sideA.reviewerId)
   const bPaperSet = papersOf(result.assignments, sideB.reviewerId)
   if (aPaperSet.has(sideA.toPaperId) || bPaperSet.has(sideB.toPaperId)) return null
-
   // ---- 执行改派：替换两条分派，其余保持不变 ----
   const next: AssignmentItem[] = result.assignments.map((a) => {
     if (a.paperId === sideA.fromPaperId && a.reviewerId === sideA.reviewerId) {
@@ -252,18 +281,28 @@ export function applySwapCandidate(
 
   next.sort((a, b) => a.paperId.localeCompare(b.paperId) || a.reviewerId.localeCompare(b.reviewerId))
 
-  // ---- 复核容量与每篇人数（一换一下理论不变，仍显式校验保证结果始终合法） ----
+  // ---- 复核容量、每篇人数与机构去重（一换一下容量/人数理论不变，仍显式校验保证结果始终合法） ----
   const loads = rebuildLoads(next, result.loads)
   if (loads.some((l) => l.assigned > l.capacity)) return null
 
   const perPaper = new Map<string, number>()
   const perPaperReviewers = new Map<string, Set<string>>()
+  const perPaperOrgs = new Map<string, Set<string>>()
+  const orgKeyOf = (reviewerId: string) => normalizeOrganization(reviewerMap.get(reviewerId)?.organization)
   for (const a of next) {
     perPaper.set(a.paperId, (perPaper.get(a.paperId) ?? 0) + 1)
     const set = perPaperReviewers.get(a.paperId) ?? new Set<string>()
     if (set.has(a.reviewerId)) return null // 同一稿件出现重复评审人
     set.add(a.reviewerId)
     perPaperReviewers.set(a.paperId, set)
+    // 机构去重：空机构不参与合并；非空机构同一稿件至多一人
+    const org = orgKeyOf(a.reviewerId)
+    if (org) {
+      const orgSet = perPaperOrgs.get(a.paperId) ?? new Set<string>()
+      if (orgSet.has(org)) return null
+      orgSet.add(org)
+      perPaperOrgs.set(a.paperId, orgSet)
+    }
   }
   for (const paper of data.papers) {
     if (paper.reviewsRequired > 0 && perPaper.get(paper.id) !== paper.reviewsRequired) return null

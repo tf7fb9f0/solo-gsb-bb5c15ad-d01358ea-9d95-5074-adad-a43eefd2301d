@@ -1,11 +1,12 @@
-import type { AppData, PreAssignment } from './types'
+import type { AppData, PreAssignment, Reviewer } from './types'
 
 const STORAGE_KEY = 'blind-review-desk:data:v1'
 
 /**
- * 兼容旧数据：preAssignments 是后加字段，旧版本 localStorage 中没有该键。
- * 不升级存储 key、不迁移文件，读取时补全即可；失效（引用已删除）的关系也原样保留，
- * 由录入界面显式提示、用户逐条移除。
+ * 兼容旧数据：preAssignments 与评审人 organization 都是后加字段，
+ * 旧版本 localStorage 中没有对应键。不升级存储 key、不迁移文件，读取时补全即可；
+ * 失效（引用已删除）的关系也原样保留，由录入界面显式提示、用户逐条移除。
+ * 旧评审人记录缺少机构字段时按空机构（''）加载——空值仅代表该评审人本人。
  */
 function migrate(raw: unknown): AppData | null {
   if (!raw || typeof raw !== 'object') return null
@@ -23,9 +24,13 @@ function migrate(raw: unknown): AppData | null {
       preAssignments.push(pa)
     }
   }
+  // 旧评审人记录缺少机构字段时按空值加载（保留原值：不去空白，交由求解器归一化）
+  const reviewers: Reviewer[] = (parsed.reviewers as Reviewer[]).map((r) =>
+    r && typeof r === 'object' && typeof r.organization === 'string' ? r : { ...r, organization: '' }
+  )
   return {
     papers: parsed.papers,
-    reviewers: parsed.reviewers,
+    reviewers,
     preAssignments
   }
 }
